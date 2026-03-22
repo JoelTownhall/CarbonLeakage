@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb~
+
+# Data — raw API downloads (large, reproducible)
+data/raw/comtrade/
+data/raw/abs/
+data/raw/imf/
+
+# Keep processed data and reference files
+!data/processed/.gitkeep
+!data/reference/.gitkeep
+
+# Outputs — figures and reports (generated, not source)
+outputs/figures/
+outputs/reports/
+
+# Keep tables (small, useful for review)
+!outputs/tables/.gitkeep
+
+# API Keys — NEVER commit
+APIs.txt
+.env
+*.env
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
