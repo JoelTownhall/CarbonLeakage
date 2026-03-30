@@ -68,8 +68,12 @@ COMTRADE_QUARTERLY = DATA_PROCESSED / "comtrade_quarterly.csv"
 MODEL_DATASET_PATH = DATA_PROCESSED / "model_dataset.csv"
 DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
 
-# ARDL model start/end (Review used Q3 2003; we have data from Q1 2010)
-MODEL_START = "2010Q1"
+# ARDL model start/end.
+# Review used Q3 2003 (primary) or Q3 2003–Q4 2019 for COVID/Ukraine-affected
+# commodities (cement, clinker, lime, flat steel). We have data from Q1 2010
+# (Comtrade free-tier limitation). We start from 2011Q1 to avoid the sparse
+# 2010Q1/Q3/Q4 quarters that produce anomalous unit-value prices.
+MODEL_START = "2011Q1"
 MODEL_END   = "2024Q4"
 
 
