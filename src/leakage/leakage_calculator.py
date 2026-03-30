@@ -131,6 +131,9 @@ def compute_leakage_row(
     price_import_aud: float,
     price_export_aud: float,
     use_review_if_wrong_sign: bool = False,
+    use_review_if_insignificant: bool = False,
+    sig_import: str = "",
+    sig_export: str = "",
 ) -> dict:
     """
     Compute carbon leakage metrics for one commodity.
@@ -148,6 +151,11 @@ def compute_leakage_row(
         Average export unit-value price (AUD per tonne).
     use_review_if_wrong_sign : bool
         If True, substitute Review elasticity when our estimate has wrong sign.
+    use_review_if_insignificant : bool
+        If True, substitute Review elasticity when our estimate is not significant
+        at the 10% level (sig code is empty or nan).
+    sig_import, sig_export : str
+        Significance code from ARDL results ('***','**','*','^','').
 
     Returns
     -------
@@ -162,7 +170,7 @@ def compute_leakage_row(
     delta_c = CARBON_PRICE_2030 * EFF_P_NO_TEBA * eid * sg_cov
     # delta_c = A$/tonne  (e.g. cement: 50 × 0.343 × 0.708 × 1.0 = $12.1/tonne)
 
-    # 2. Elasticities — resolve wrong-sign issues
+    # 2. Elasticities — resolve wrong-sign / insignificant issues
     rev_imp = REVIEW_IMPORT_RESULTS.get(commodity, {})
     rev_exp = REVIEW_EXPORT_RESULTS.get(commodity, {})
 
@@ -176,6 +184,15 @@ def compute_leakage_row(
         if not np.isnan(elasticity_export) and elasticity_export > 0 and rev_exp:
             elasticity_export = rev_exp["elasticity"]
             exp_source = "review (substituted: wrong sign)"
+
+    if use_review_if_insignificant:
+        # Substitute if not significant at 10% (sig code is empty string)
+        if not np.isnan(elasticity_import) and sig_import == "" and rev_imp:
+            elasticity_import = rev_imp["elasticity"]
+            imp_source = "review (substituted: not significant)"
+        if not np.isnan(elasticity_export) and sig_export == "" and rev_exp:
+            elasticity_export = rev_exp["elasticity"]
+            exp_source = "review (substituted: not significant)"
 
     # Use absolute value for leakage magnitude (sign convention: leakage > 0)
     beta_imp = abs(elasticity_import) if not np.isnan(elasticity_import) else np.nan
@@ -219,15 +236,19 @@ def compute_leakage_row(
 # Main: run leakage calculation for all commodities
 # ---------------------------------------------------------------------------
 
-def run_leakage_calculation(use_review_if_wrong_sign: bool = False) -> pd.DataFrame:
+def run_leakage_calculation(
+    use_review_if_wrong_sign: bool = False,
+    use_review_if_insignificant: bool = False,
+) -> pd.DataFrame:
     """
     Run the full leakage calculation for all commodities.
 
     Parameters
     ----------
     use_review_if_wrong_sign : bool
-        If True, substitute the Review's elasticity for models with wrong sign.
-        Default: False (report our estimates as-is, flag wrong signs).
+        Substitute Review elasticity for models with wrong sign.
+    use_review_if_insignificant : bool
+        Substitute Review elasticity for models not significant at 10%.
 
     Returns
     -------
@@ -239,14 +260,17 @@ def run_leakage_calculation(use_review_if_wrong_sign: bool = False) -> pd.DataFr
 
     rows = []
     for commodity in COMMODITY_HS_CODES:
-        # Get our elasticities
         imp_row = ardl[(ardl["commodity"] == commodity) & (ardl["flow"] == "import")]
         exp_row = ardl[(ardl["commodity"] == commodity) & (ardl["flow"] == "export")]
 
         beta_imp = float(imp_row["lr_elasticity"].values[0]) if len(imp_row) > 0 else np.nan
         beta_exp = float(exp_row["lr_elasticity"].values[0]) if len(exp_row) > 0 else np.nan
+        sig_imp  = str(imp_row["sig"].values[0]) if len(imp_row) > 0 else ""
+        sig_exp  = str(exp_row["sig"].values[0]) if len(exp_row) > 0 else ""
+        # pandas reads empty strings as NaN
+        sig_imp  = "" if sig_imp in ("nan", "None") else sig_imp
+        sig_exp  = "" if sig_exp in ("nan", "None") else sig_exp
 
-        # Get prices
         p_imp_row = prices[(prices["commodity"] == commodity) & (prices["flow"] == "import")]
         p_exp_row = prices[(prices["commodity"] == commodity) & (prices["flow"] == "export")]
 
@@ -258,6 +282,9 @@ def run_leakage_calculation(use_review_if_wrong_sign: bool = False) -> pd.DataFr
             beta_imp, beta_exp,
             p_imp_aud, p_exp_aud,
             use_review_if_wrong_sign=use_review_if_wrong_sign,
+            use_review_if_insignificant=use_review_if_insignificant,
+            sig_import=sig_imp,
+            sig_export=sig_exp,
         )
         rows.append(row)
 
@@ -366,21 +393,37 @@ def print_comparison_table(ours: pd.DataFrame, review: pd.DataFrame) -> None:
 if __name__ == "__main__":
     logger.info("Running carbon leakage calculation...")
 
-    ours   = run_leakage_calculation(use_review_if_wrong_sign=False)
+    ours   = run_leakage_calculation()
     review = run_review_leakage()
 
-    # Save
+    # Save raw (our estimates as-is)
     LEAKAGE_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     ours.to_csv(LEAKAGE_OUTPUT_PATH, index=False)
     logger.info("Saved leakage results → %s", LEAKAGE_OUTPUT_PATH)
 
-    # Print comparison table
+    # ── Scenario A: our estimates as-is ──────────────────────────────────────
+    print("\n══ SCENARIO A: Our elasticities as estimated ══")
     print_comparison_table(ours, review)
 
-    # Also print the "use Review where wrong sign" version
-    ours_fixed = run_leakage_calculation(use_review_if_wrong_sign=True)
-    n_substituted = (ours_fixed["imp_source"].str.contains("substituted") |
-                     ours_fixed["exp_source"].str.contains("substituted")).sum()
-    if n_substituted > 0:
-        print(f"\n--- Variant: Review elasticity substituted for {n_substituted} wrong-sign models ---")
-        print_comparison_table(ours_fixed, review)
+    # ── Scenario B: substitute Review for wrong-sign + insignificant ─────────
+    ours_b = run_leakage_calculation(
+        use_review_if_wrong_sign=True,
+        use_review_if_insignificant=True,
+    )
+    n_sub = (ours_b["imp_source"].str.contains("substituted") |
+             ours_b["exp_source"].str.contains("substituted")).sum()
+    print(f"\n══ SCENARIO B: Review substituted where wrong-sign or not significant "
+          f"({n_sub} substitutions) ══")
+    print_comparison_table(ours_b, review)
+
+    # ── Summary: which elasticities were substituted ─────────────────────────
+    print("\n  Substitutions in Scenario B:")
+    for _, r in ours_b.iterrows():
+        if "substituted" in r["imp_source"]:
+            rev_e = REVIEW_IMPORT_RESULTS.get(r["commodity"], {}).get("elasticity", "n/a")
+            print(f"    {r['commodity']} import: ours={ours[ours['commodity']==r['commodity']]['beta_import'].values[0]:+.3f}"
+                  f"  →  review={rev_e}  ({r['imp_source']})")
+        if "substituted" in r["exp_source"]:
+            rev_e = REVIEW_EXPORT_RESULTS.get(r["commodity"], {}).get("elasticity", "n/a")
+            print(f"    {r['commodity']} export: ours={ours[ours['commodity']==r['commodity']]['beta_export'].values[0]:+.3f}"
+                  f"  →  review={rev_e}  ({r['exp_source']})")
