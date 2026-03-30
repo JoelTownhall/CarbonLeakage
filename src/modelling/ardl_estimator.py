@@ -546,7 +546,7 @@ def print_comparison_table(results: pd.DataFrame) -> None:
     print("  Sig: *** p<0.001, ** p<0.01, * p<0.05, ^ p<0.10")
     print("  Bounds: p-value for I(1) upper bound (Case III)")
     print("  Rev: Review benchmark from Annex Tables 1 & 2")
-    print("  Note: Our prices are in USD; Review used AUD. Diff partly reflects currency.")
+    print("  Note: Import prices converted USD→AUD via RBA F11 (matching Review). Export prices in USD.")
     print("=" * 90)
 
 

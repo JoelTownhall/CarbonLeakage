@@ -1,35 +1,33 @@
 """
 build_dataset.py — Merge all data sources into model-ready ARDL panels.
 
-Session 2, Step 2B.
+Session 2, Step 2B (updated Session 3 to add AUD conversion).
 
 This module takes the quarterly Comtrade price/quantity series (from
 aggregate_trade.py) and merges in:
   - ABS demand controls (Construction GVA, Final Demand, GDP)
   - IMF trade-weighted GDP index (for export models)
+  - RBA F11 AUD/USD exchange rates (for import price conversion)
 
 Output:
     data/processed/model_dataset.csv
     data/processed/{commodity}_{flow}.csv  (one file per model)
 
 Each row is one quarter. Each file contains the log-level variables
-needed for ARDL estimation (Session 3):
+needed for ARDL estimation:
     ln_quantity  — log of import/export volume (tonnes)
-    ln_price     — log of unit-value price (USD/tonne, see Note below)
+    ln_price     — log of unit-value price
     ln_demand    — log of demand control (ABS for imports, IMF GDP for exports)
 
-Note on currency:
-    The Review used AUD prices (CIF for imports, FOB for exports).
-    We currently use USD prices from Comtrade `primaryValue`.
-    Exchange rate conversion (USD → AUD) is NOT yet applied here because
-    the RBA F11 monthly AUD/USD data has not been loaded.
+Currency treatment (matching the Review):
+    IMPORTS:  Comtrade primaryValue is in USD. The Review used ABS customs
+              values which are already in AUD. We convert:
+                  price_AUD = price_USD × (AUD per USD)
+              using quarterly-average RBA F11 exchange rates.
+              Source: data/raw/imf/exchange_rate_aud_usd.csv
 
-    Impact: the estimated elasticity is with respect to USD prices.
-    Because ln(P_AUD) = ln(P_USD) + ln(AUD/USD), omitting exchange rate
-    movements biases the price series when AUD/USD fluctuates.
-    This is flagged as "TODO: add exchange rate conversion" in the code.
-    The direction of bias is small if AUD/USD is relatively stable, but
-    should be corrected before final results are published.
+    EXPORTS:  The Review converted ABS FOB (AUD) back to USD using BIS FX.
+              Our Comtrade primaryValue is already in USD — no conversion needed.
 
 Usage:
     python -m src.data_processing.build_dataset              # all commodities
@@ -114,6 +112,25 @@ def load_abs_series(series_name: str) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Helper: load RBA exchange rates
+# ---------------------------------------------------------------------------
+
+def load_exchange_rates() -> pd.DataFrame:
+    """
+    Load quarterly-average AUD/USD exchange rates from the RBA F11 file.
+
+    Returns DataFrame with columns: [period_str, aud_per_usd]
+    where aud_per_usd = how many AUD to buy 1 USD
+    (e.g. 0.99 in 2011 when AUD was near parity; 1.55 in 2025 after AUD weakened)
+    """
+    fx_path = DATA_RAW / "imf" / "exchange_rate_aud_usd.csv"
+    if not fx_path.exists():
+        return None
+    df = pd.read_csv(fx_path)
+    return df[["period_str", "aud_per_usd"]]
+
+
+# ---------------------------------------------------------------------------
 # Helper: load trade-weighted GDP
 # ---------------------------------------------------------------------------
 
@@ -143,6 +160,7 @@ def build_model_panel(
     flow: str,
     abs_controls: dict,
     tw_gdp: pd.DataFrame,
+    fx_rates: pd.DataFrame = None,
 ) -> pd.DataFrame:
     """
     Build the model-ready panel for one (commodity, flow) pair.
@@ -180,16 +198,35 @@ def build_model_panel(
     df["period_str"] = df["year"].astype(str) + "Q" + df["quarter"].astype(str)
 
     # -- Step 2: Compute log variables for trade --
-    # Log quantity: natural log of weight in tonnes
-    # Small weights can produce negative/very small logs; we've already filtered
-    # zero-weight rows in aggregate_trade.py
     df["ln_quantity"] = np.log(df["weight_tonnes"].clip(lower=1e-6))
 
-    # Log price: natural log of USD/tonne unit value
-    # TODO: multiply by AUD/USD exchange rate before taking log
-    #       to convert to AUD/tonne (matching the Review's currency).
-    #       Currently using USD price directly.
-    df["ln_price"] = np.log(df["price_usd_per_tonne"].clip(lower=1e-6))
+    # Currency conversion for import prices (matching the Review):
+    #   Review imports: ABS customs value already in AUD
+    #   Our imports:    Comtrade primaryValue in USD → convert to AUD
+    #   Review exports: ABS FOB in AUD → converted to USD via BIS FX
+    #   Our exports:    Comtrade primaryValue already in USD → no conversion needed
+    if flow == "import" and fx_rates is not None and not fx_rates.empty:
+        df = df.merge(fx_rates, on="period_str", how="left")
+        n_missing_fx = df["aud_per_usd"].isna().sum()
+        if n_missing_fx > 0:
+            logger.warning(
+                "  %s %s: %d quarters missing exchange rate — filling with interpolation",
+                commodity, flow, n_missing_fx,
+            )
+            df["aud_per_usd"] = df["aud_per_usd"].interpolate()
+        df["price_aud_per_tonne"] = df["price_usd_per_tonne"] * df["aud_per_usd"]
+        df["ln_price"] = np.log(df["price_aud_per_tonne"].clip(lower=1e-6))
+        df["price_currency"] = "AUD"
+        logger.info("  %s import: converted USD → AUD prices using RBA F11 rates", commodity)
+    else:
+        df["price_aud_per_tonne"] = np.nan
+        df["ln_price"] = np.log(df["price_usd_per_tonne"].clip(lower=1e-6))
+        df["price_currency"] = "USD"
+        if flow == "import":
+            logger.warning(
+                "  %s import: exchange rates unavailable — using USD prices (suboptimal)",
+                commodity,
+            )
 
     # -- Step 3: Merge demand control --
     if flow == "import":
@@ -270,10 +307,10 @@ def build_model_panel(
     cols_core = [
         "commodity", "flow", "period_str", "year", "quarter",
         "ln_quantity", "ln_price", "ln_demand",
-        "demand_source", "price_flag",
+        "demand_source", "price_currency", "price_flag",
     ]
     cols_audit = [
-        "weight_tonnes", "price_usd_per_tonne", "value_usd",
+        "weight_tonnes", "price_usd_per_tonne", "price_aud_per_tonne", "value_usd",
         "n_hs_codes", "n_monthly_obs",
     ]
     # Only include audit columns that exist
@@ -365,6 +402,14 @@ def build_all_datasets(
         logger.warning("  Could not load trade-weighted GDP: %s", e)
         tw_gdp = None
 
+    # Load RBA exchange rates (for import price AUD conversion)
+    logger.info("Loading RBA F11 AUD/USD exchange rates ...")
+    fx_rates = load_exchange_rates()
+    if fx_rates is not None:
+        logger.info("  Loaded exchange rates: %d quarters", len(fx_rates))
+    else:
+        logger.warning("  Exchange rates not found — import prices will remain in USD")
+
     # Determine which commodities and flows to process
     commodities = [target_commodity] if target_commodity else list(COMMODITY_HS_CODES.keys())
     flows = [target_flow] if target_flow else ["import", "export"]
@@ -383,7 +428,7 @@ def build_all_datasets(
             ].copy()
 
             # Build panel
-            panel = build_model_panel(ct_sub, commodity, flow, abs_controls, tw_gdp)
+            panel = build_model_panel(ct_sub, commodity, flow, abs_controls, tw_gdp, fx_rates)
 
             if panel.empty:
                 logger.warning("  Empty panel for %s %s — skipping.", commodity, flow)
