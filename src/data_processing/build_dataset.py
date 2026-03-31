@@ -71,8 +71,9 @@ DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
 # commodities (cement, clinker, lime, flat steel). We have data from Q1 2010
 # (Comtrade free-tier limitation). We start from 2011Q1 to avoid the sparse
 # 2010Q1/Q3/Q4 quarters that produce anomalous unit-value prices.
-MODEL_START = "2011Q1"
-MODEL_END   = "2024Q4"
+MODEL_START          = "2011Q1"   # Comtrade-only run
+MODEL_START_EXTENDED = "2003Q1"   # BACI-extended run (matches Review start)
+MODEL_END            = "2024Q4"
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +162,7 @@ def build_model_panel(
     abs_controls: dict,
     tw_gdp: pd.DataFrame,
     fx_rates: pd.DataFrame = None,
+    model_start: str = None,
 ) -> pd.DataFrame:
     """
     Build the model-ready panel for one (commodity, flow) pair.
@@ -269,8 +271,9 @@ def build_model_panel(
             df["demand_source"] = "trade_weighted_gdp (MISSING)"
 
     # -- Step 4: Filter to model date range --
+    start = model_start if model_start else MODEL_START
     df = df[
-        (df["period_str"] >= MODEL_START) &
+        (df["period_str"] >= start) &
         (df["period_str"] <= MODEL_END)
     ].copy()
 
@@ -352,6 +355,7 @@ def build_model_panel(
 def build_all_datasets(
     target_commodity: str = None,
     target_flow: str = None,
+    use_extended: bool = False,
 ) -> pd.DataFrame:
     """
     Build model-ready panels for all (or specified) commodity-flow pairs.
@@ -366,21 +370,37 @@ def build_all_datasets(
         If set, only process this commodity.
     target_flow : str, optional
         If set, only process this flow ("import" or "export").
+    use_extended : bool
+        If True, use data/processed/comtrade_quarterly_extended.csv which
+        splices BACI (2003–2009) before Comtrade (2010–2024).
+        Run baci_loader.py first to generate this file.
 
     Returns
     -------
     pd.DataFrame
         Combined model dataset.
     """
-    # Load trade data
-    if not COMTRADE_QUARTERLY.exists():
+    # Load trade data — either standard Comtrade or BACI-extended panel
+    extended_path = DATA_PROCESSED / "comtrade_quarterly_extended.csv"
+    if use_extended and extended_path.exists():
+        trade_source = extended_path
+        logger.info("Using BACI-extended panel: %s", extended_path)
+    else:
+        trade_source = COMTRADE_QUARTERLY
+        if use_extended:
+            logger.warning(
+                "Extended panel not found at %s — falling back to Comtrade only. "
+                "Run baci_loader.py first.", extended_path
+            )
+
+    if not trade_source.exists():
         raise FileNotFoundError(
-            f"Quarterly trade data not found at {COMTRADE_QUARTERLY}. "
+            f"Quarterly trade data not found at {trade_source}. "
             "Run aggregate_trade.process_all_commodities() first."
         )
 
-    comtrade_all = pd.read_csv(COMTRADE_QUARTERLY)
-    logger.info("Loaded %d rows from comtrade_quarterly.csv", len(comtrade_all))
+    comtrade_all = pd.read_csv(trade_source)
+    logger.info("Loaded %d rows from %s", len(comtrade_all), trade_source.name)
 
     # Load ABS demand controls (load once, reuse for all commodities)
     logger.info("Loading ABS demand control variables ...")
@@ -428,7 +448,9 @@ def build_all_datasets(
             ].copy()
 
             # Build panel
-            panel = build_model_panel(ct_sub, commodity, flow, abs_controls, tw_gdp, fx_rates)
+            start = MODEL_START_EXTENDED if use_extended else MODEL_START
+            panel = build_model_panel(ct_sub, commodity, flow, abs_controls, tw_gdp, fx_rates,
+                                      model_start=start)
 
             if panel.empty:
                 logger.warning("  Empty panel for %s %s — skipping.", commodity, flow)
