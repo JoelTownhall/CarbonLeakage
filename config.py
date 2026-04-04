@@ -234,3 +234,98 @@ IMF_COUNTRY_CODES: dict = {
     "USA": "USA",
     "IND": "IND",
 }
+
+# ---------------------------------------------------------------------------
+# Bilateral trade partner countries
+#
+# UN Comtrade uses M49 numeric codes (same as UN country codes).
+# These are the major import source countries for each commodity group,
+# based on DFAT/ABS trade statistics.
+#
+# Used for:
+#   - Bilateral Comtrade queries (partnerCode) to break down imports by origin
+#   - Carbon leakage assessment: identifying high-emission import sources
+#   - Comparison against world-aggregate results
+# ---------------------------------------------------------------------------
+
+# UN M49 numeric codes for key bilateral trading partners
+# Format: {ISO3: M49_code}
+COMTRADE_PARTNER_CODES: dict = {
+    "CHN": "156",   # China
+    "JPN": "392",   # Japan
+    "KOR": "410",   # Republic of Korea
+    "IND": "356",   # India
+    "VNM": "704",   # Vietnam
+    "MYS": "458",   # Malaysia
+    "THA": "764",   # Thailand
+    "IDN": "360",   # Indonesia
+    "TWN": "490",   # Taiwan (Other Asia, nes in Comtrade)
+    "USA": "840",   # United States
+    "DEU": "276",   # Germany
+    "GBR": "826",   # United Kingdom
+    "UKR": "804",   # Ukraine
+    "NZL": "554",   # New Zealand
+    "CAN": "124",   # Canada
+    "SGP": "702",   # Singapore
+    "BEL": "056",   # Belgium
+    "NLD": "528",   # Netherlands
+}
+
+# Major import source countries by commodity group
+# Based on ABS International Trade statistics and Comtrade bilateral data.
+# Ordered approximately by import share (largest first).
+MAJOR_IMPORT_SOURCES: dict = {
+    "clinker": ["CHN", "JPN", "KOR", "VNM", "THA"],
+    "cement":  ["CHN", "KOR", "JPN", "THA", "VNM", "IDN"],
+    "lime":    ["CHN", "JPN", "KOR", "DEU", "BEL"],
+    # Steel groups: China and East Asia dominate Australian imports
+    "crude_steel":        ["CHN", "JPN", "KOR", "IND", "UKR", "USA"],
+    "long_steel":         ["CHN", "JPN", "KOR", "IND", "VNM", "MYS", "THA"],
+    "flat_steel":         ["CHN", "JPN", "KOR", "IND", "TWN", "VNM", "DEU"],
+    "treated_flat_steel": ["CHN", "JPN", "KOR", "IND", "TWN", "DEU", "NLD"],
+}
+
+# Countries with explicit carbon pricing mechanisms (as of 2025).
+# Imports from these countries are less likely to cause carbon leakage
+# as their producers already face a carbon cost.
+# Sources: World Bank Carbon Pricing Dashboard; ICAP ETS Map.
+COUNTRIES_WITH_CARBON_PRICE: list = [
+    "GBR",   # UK ETS (2021–)
+    "NZL",   # NZ ETS (2008–)
+    "CAN",   # Federal Output-Based Pricing System (2019–)
+    "KOR",   # Korea ETS (2015–)
+    "JPN",   # Tokyo/Saitama ETS + J-Credit; national carbon levy (2012–)
+    "SGP",   # Singapore Carbon Tax (2019–)
+    "CHE",   # Swiss ETS (2008–, linked to EU ETS 2020–)
+    # EU member states — ETS covers steel, cement, lime
+    "DEU",   # Germany (EU ETS)
+    "FRA",   # France (EU ETS)
+    "NLD",   # Netherlands (EU ETS)
+    "BEL",   # Belgium (EU ETS)
+    "ITA",   # Italy (EU ETS)
+    "ESP",   # Spain (EU ETS)
+    "POL",   # Poland (EU ETS)
+    "SWE",   # Sweden (EU ETS + carbon tax)
+    "AUT",   # Austria (EU ETS)
+    "FIN",   # Finland (EU ETS + carbon tax)
+    "DNK",   # Denmark (EU ETS)
+    "IRL",   # Ireland (EU ETS)
+    "PRT",   # Portugal (EU ETS)
+    "CZE",   # Czech Republic (EU ETS)
+    "HUN",   # Hungary (EU ETS)
+    "ROU",   # Romania (EU ETS)
+    "GRC",   # Greece (EU ETS)
+    "SVK",   # Slovakia (EU ETS)
+    "BGR",   # Bulgaria (EU ETS)
+    "HRV",   # Croatia (EU ETS)
+    "SVN",   # Slovenia (EU ETS)
+    "EST",   # Estonia (EU ETS)
+    "LVA",   # Latvia (EU ETS)
+    "LTU",   # Lithuania (EU ETS)
+    "LUX",   # Luxembourg (EU ETS)
+    "MLT",   # Malta (EU ETS)
+    "CYP",   # Cyprus (EU ETS)
+    "NOR",   # Norway (EU ETS-linked + carbon tax)
+    "ISL",   # Iceland (EU ETS-linked)
+    "LIE",   # Liechtenstein (EU ETS-linked)
+]
